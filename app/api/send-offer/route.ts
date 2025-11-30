@@ -6,15 +6,17 @@ import { getCurrentSortType, saveNextSortType } from '@/src/lib/db/settings';
 import { PET_CATEGORIES } from '@/src/lib/shopee/categories';
 import type { ProductOfferV2Node } from '@/src/lib/shopee/shopee.types';
 
-const MAX_SORT_TRIES = 5;      // quantos sortTypes diferentes tentar
-const MAX_PAGES_PER_SORT = 5;  // quantas páginas por sortType+categoria (pode ajustar)
+// ====== CONFIGURAÇÕES GERAIS ======
 
-// Faixa de preço (em reais) – por enquanto fixa; depois podemos ler do banco/front
+const MAX_SORT_TRIES = 4;
+const MAX_PAGES_PER_SORT_DEFAULT = 3;
+const ITEMS_PER_PAGE = 50;
 const MIN_PRICE = 1;
 const MAX_PRICE = 100;
+const MAX_TOTAL_REQUESTS_PER_RUN = 8;
 
-// Palavras que queremos evitar para não ficar sempre “mais do mesmo”
-// (você pode ajustar/expandir essa lista facilmente)
+const SORT_PRIORITY: number[] = [1, 4, 2, 5];
+
 const BLOCKED_KEYWORDS = [
   'feno',
   'coast cross',
@@ -23,12 +25,129 @@ const BLOCKED_KEYWORDS = [
   'coelho',
   'porquinho da índia',
   'porquinho da india',
+  'pássaro',
+  'pássaros',
+  'passaro',
+  'passaros',
+  'calopsita',
+  'periquito',
+  'papagaio',
+  'canário',
+  'canario',
+  'ave',
+  'aves',
 ];
-// ================== Helpers de preço ==================
 
-/**
- * Converte priceMin/priceMax (string ou number) para número em reais
- */
+// ====== TIPOS DE PRODUTO ======
+
+type ProductKind = 'FOOD' | 'SNACK' | 'TOY' | 'HYGIENE' | 'ACCESSORY' | 'GENERIC';
+
+function detectProductKind(nameRaw: string | null | undefined): ProductKind {
+  if (!nameRaw) return 'GENERIC';
+  const name = nameRaw.toLowerCase();
+
+  // Ração / alimento principal
+  if (
+    name.includes('ração') ||
+    name.includes('raçao') ||
+    name.includes('alimento completo') ||
+    name.includes('alimento úmido') ||
+    name.includes('alimento umido') ||
+    name.includes('ração úmida') ||
+    name.includes('ração umida') ||
+    name.includes('sachê') ||
+    name.includes('sache') ||
+    name.includes('pedigree') ||
+    name.includes('whiskas') ||
+    name.includes('golden') ||
+    name.includes('premier')
+  ) {
+    return 'FOOD';
+  }
+
+  // Petiscos / snacks
+  if (
+    name.includes('petisco') ||
+    name.includes('bifinho') ||
+    name.includes('snack') ||
+    name.includes('biscuits') ||
+    name.includes('biscoito') ||
+    name.includes('ossinho') ||
+    name.includes('stick')
+  ) {
+    return 'SNACK';
+  }
+
+  // Brinquedos
+  if (
+    name.includes('brinquedo') ||
+    name.includes('bola') ||
+    name.includes('mordedor') ||
+    name.includes('pelúcia') ||
+    name.includes('pelucia') ||
+    name.includes('frisbee') ||
+    name.includes('varinha') ||
+    name.includes('catnip') ||
+    name.includes('arranhador') ||
+    name.includes('laser')
+  ) {
+    return 'TOY';
+  }
+
+  // Higiene / limpeza / tapete / banheiro
+  if (
+    name.includes('tapete higiênico') ||
+    name.includes('tapete higienico') ||
+    name.includes('banho') ||
+    name.includes('shampoo') ||
+    name.includes('condicionador') ||
+    name.includes('areia higiênica') ||
+    name.includes('areia higienica') ||
+    name.includes('cata coco') ||
+    name.includes('cata-coco') ||
+    name.includes('higiênico') ||
+    name.includes('higienico') ||
+    name.includes('saquinho') ||
+    name.includes('sacola') ||
+    name.includes('refil')
+  ) {
+    return 'HYGIENE';
+  }
+
+  // Acessórios gerais
+  if (
+    name.includes('coleira') ||
+    name.includes('peitoral') ||
+    name.includes('guia') ||
+    name.includes('cama') ||
+    name.includes('casinha') ||
+    name.includes('comedouro') ||
+    name.includes('bebedouro') ||
+    name.includes('roupa') ||
+    name.includes('camiseta') ||
+    name.includes('pote') ||
+    name.includes('tigela') ||
+    name.includes('fonte') ||
+    name.includes('cortador de unha') ||
+    name.includes('escova')
+  ) {
+    return 'ACCESSORY';
+  }
+
+  return 'GENERIC';
+}
+
+// ====== HELPERS GERAIS ======
+
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 function parsePrice(price: string | number | null | undefined): number {
   if (!price) return 0;
   const priceStr = typeof price === 'string' ? price.replace(',', '.') : String(price);
@@ -36,25 +155,14 @@ function parsePrice(price: string | number | null | undefined): number {
   return Number.isNaN(num) ? 0 : num;
 }
 
-/**
- * Verifica se o preço do produto está dentro da faixa permitida
- */
 function isPriceInRange(offer: ProductOfferV2Node): boolean {
   const priceMin = parsePrice(offer.priceMin);
   const priceMax = parsePrice(offer.priceMax);
-
-  // usa o menor preço válido
   const price = priceMin > 0 ? priceMin : priceMax;
-  if (price === 0) return false; // sem preço válido
-
+  if (price === 0) return false;
   return price >= MIN_PRICE && price <= MAX_PRICE;
 }
 
-/**
- * Monta o texto de preço:
- * - se priceMax > priceMin -> "💸 De: R$ X,XX\n💥 Por: R$ Y,YY  (Z% OFF)"
- * - senão -> "💥 Por apenas: R$ Y,YY"
- */
 function buildPriceText(priceMin: number, priceMax: number, discountRate?: number | null): string {
   const minStr = `R$ ${priceMin.toFixed(2)}`;
   const maxStr = `R$ ${priceMax.toFixed(2)}`;
@@ -65,50 +173,148 @@ function buildPriceText(priceMin: number, priceMax: number, discountRate?: numbe
 
   if (priceMax > priceMin && priceMax > 0) {
     return discountStr
-      ? `💸 De: ${maxStr}\n💥 Por: ${minStr}  (${discountStr})`
-      : `💸 De: ${maxStr}\n💥 Por: ${minStr}`;
+      ? `💸 *De:* ${maxStr}\n💥 *Por:* ${minStr}  (_${discountStr}_)`
+      : `💸 *De:* ${maxStr}\n💥 *Por:* ${minStr}`;
   }
 
-  // preço único
-  return `💥 Por apenas: ${minStr}`;
+  return `💥 *Por apenas:* ${minStr}`;
 }
 
-// ================== Helpers de mensagem / CTA ==================
+// ====== ABERTURAS POR TIPO DE PRODUTO ======
 
-/**
- * Frases randômicas de call-to-action para o link
- */
-const CTA_MESSAGES: string[] = [
-  '🛒 Clique para ver fotos, avaliações e cores disponíveis:',
-  '🐶 Veja os detalhes e tamanhos disponíveis aqui:',
-  '🐾 Confira as fotos e os comentários de quem já comprou:',
-  '💚 Clique e veja se ainda está disponível na promoção:',
-  '📦 Veja o frete, prazo de entrega e mais detalhes aqui:',
-  '🔥 Aproveite enquanto ainda está com desconto:',
-  '⭐ Veja as avaliações e descubra por que esse produto é tão bem avaliado:',
-  '🎯 Clique para ver mais fotos e escolher o modelo ideal:',
-  '💥 Confira o preço atualizado e condições de pagamento:',
-  '🐕‍🦺 Seu pet merece esse mimo, veja mais detalhes aqui:',
-  '🎁 Garanta já o seu antes que acabe o estoque:',
-  '✨ Clique e veja todas as opções disponíveis:',
-  '🚀 Aproveite essa oferta imperdível:',
-  '💝 Dê esse presente especial para o seu pet:',
-  '🏆 Produto com ótimas avaliações, confira:',
+const OPENING_BY_KIND: Record<ProductKind, string[]> = {
+  FOOD: [
+    '🍽️ *Economia na ração pro seu pet:*',
+    '🐾 *Olha essa oferta de ração pra cuidar bem do seu pet:*',
+    '🥣 *Ração em promoção pra manter o potinho sempre cheio:*',
+    '🍖 *Alimento de qualidade com preço de oferta:*',
+  ],
+  SNACK: [
+    '🦴 *Mimo gostoso pro seu pet sem pesar no bolso:*',
+    '🍖 *Petisco em oferta pra alegrar o dia do seu pet:*',
+    '😋 *Hora do snack! Olha esse petisco em promoção:*',
+    '🎁 *Agrado especial pro seu pet com desconto:*',
+  ],
+  TOY: [
+    '🎾 *Hora de brincar! Olha esse brinquedo em oferta:*',
+    '🐶 *Brinquedo novo pro seu pet gastar energia:*',
+    '🎉 *Promo de brinquedo pra acabar com o tédio do seu pet:*',
+    '🧸 *Diversão garantida com esse brinquedo em oferta:*',
+  ],
+  HYGIENE: [
+    '🧼 *Cuidar da higiene do pet também pode ser barato:*',
+    '🚿 *Oferta pra manter seu pet limpinho e cheiroso:*',
+    '🧴 *Produto de higiene em promoção pro seu pet:*',
+    '✨ *Limpeza e praticidade com preço especial:*',
+  ],
+  ACCESSORY: [
+    '🎀 *Acessório em promoção pra deixar seu pet ainda mais estiloso:*',
+    '📦 *Acessório útil pro dia a dia do seu pet com desconto:*',
+    '🛏️ *Conforto e praticidade pro seu pet com preço de oferta:*',
+    '⭐ *Item essencial pro seu pet em promoção:*',
+  ],
+  GENERIC: [
+    '🐾 *Olha essa pra hoje pro seu pet:*',
+    '✨ *Oferta selecionada pra quem ama pet:*',
+    '🎁 *Achamos uma promoção legal pro seu pet:*',
+    '💚 *Mais uma chance de economizar no seu pet:*',
+    '🔥 *Promo boa pra cuidar do seu pet sem pesar no bolso:*',
+    '⭐ *Dica rápida de economia pra tutores:*',
+    '🐶 *Seu pet merece, e o seu bolso agradece:*',
+    '📣 *Oferta fresca que acabou de sair:*',
+  ],
+};
+
+function getOpeningByKind(kind: ProductKind): string {
+  const list = OPENING_BY_KIND[kind] ?? OPENING_BY_KIND.GENERIC;
+  const idx = Math.floor(Math.random() * list.length);
+  return list[idx];
+}
+
+// ====== CTA POR TIPO DE PRODUTO ======
+
+const CTA_BY_KIND: Record<ProductKind, string[]> = {
+  FOOD: [
+    '🍽️ Veja os sabores e tamanhos disponíveis aqui:',
+    '🐕 Confira as avaliações de quem já comprou essa ração:',
+    '🥣 Clique pra ver se o pacote ideal pro seu pet está em oferta:',
+    '📦 Veja frete, prazo e mais detalhes da ração aqui:',
+  ],
+  SNACK: [
+    '🦴 Veja os sabores e quantidades disponíveis aqui:',
+    '😋 Confira o que outros tutores acharam desse petisco:',
+    '🍖 Clique pra ver mais detalhes desse snack pro seu pet:',
+    '🎁 Garanta já esse mimo pro seu pet:',
+  ],
+  TOY: [
+    '🎾 Veja as fotos e tamanhos desse brinquedo:',
+    '🐾 Confira como esse brinquedo pode entreter seu pet:',
+    '🎉 Clique pra ver mais modelos e cores disponíveis:',
+    '🧸 Veja as avaliações e garanta diversão pro seu pet:',
+  ],
+  HYGIENE: [
+    '🧼 Veja como usar e as avaliações de outros tutores:',
+    '🚿 Clique pra ver detalhes e componentes do produto:',
+    '🧴 Confira instruções de uso e mais informações aqui:',
+    '✨ Veja quantidades e opções disponíveis:',
+  ],
+  ACCESSORY: [
+    '📏 Veja medidas, tamanhos e cores disponíveis aqui:',
+    '🎀 Confira as fotos e comentários de quem já comprou:',
+    '🛏️ Clique pra ver mais detalhes desse acessório:',
+    '⭐ Veja as avaliações e garanta o seu:',
+  ],
+  GENERIC: [
+    '🛒 Clique para ver fotos, avaliações e cores disponíveis:',
+    '🐶 Veja os detalhes e tamanhos disponíveis aqui:',
+    '🐾 Confira as fotos e os comentários de quem já comprou:',
+    '💚 Clique e veja se ainda está disponível na promoção:',
+    '📦 Veja o frete, prazo de entrega e mais detalhes aqui:',
+    '🔥 Aproveite enquanto ainda está com desconto:',
+    '⭐ Veja as avaliações e descubra por que esse produto é tão bem avaliado:',
+    '🎯 Clique para ver mais fotos e escolher o modelo ideal:',
+    '💥 Confira o preço atualizado e condições de pagamento:',
+  ],
+};
+
+function getCtaByKind(kind: ProductKind): string {
+  const list = CTA_BY_KIND[kind] ?? CTA_BY_KIND.GENERIC;
+  const idx = Math.floor(Math.random() * list.length);
+  return list[idx];
+}
+
+// ====== URGÊNCIA / RODAPÉ ======
+
+const URGENCY_MESSAGES: string[] = [
+  '⚠️ Oferta por tempo limitado!',
+  '⏰ Corre! Promoção válida apenas hoje!',
+  '🔥 Últimas unidades com esse preço!',
+  '⚡ Estoque limitado! Garanta o seu agora!',
+  '🎯 Oferta relâmpago! Pode acabar a qualquer momento!',
+  '💨 Não perca! Essa promoção não vai durar muito!',
+  '🚨 Atenção! Preço promocional por tempo limitado!',
+  '⏳ Aproveite antes que o desconto acabe!',
+  '🔔 Alerta de oferta! Pode sair do ar a qualquer momento!',
+  '💥 Promoção imperdível! Estoque acabando rápido!',
+  '🎁 Última chance de garantir com esse desconto!',
+  '⚠️ Pouquíssimas unidades restantes!',
+  '🏃‍♂️ Corre! Outros compradores já estão de olho!',
+  '🔥 Oferta quente! Pode acabar nas próximas horas!',
+  '⭐ Preço especial que não vai se repetir tão cedo!',
+  '💎 Oportunidade única! Garanta já!',
+  '🚀 Voa! Essa oferta é por tempo limitado!',
+  '⏰ Tick‑tock! O desconto pode acabar a qualquer momento!',
+  '🎯 Não deixe para depois! Estoque limitado!',
+  '💰 Economia real! Mas só enquanto durar o estoque!',
 ];
 
-/**
- * Escolhe uma CTA aleatória do array
- */
-function getRandomCtaMessage(): string {
-  const idx = Math.floor(Math.random() * CTA_MESSAGES.length);
-  return CTA_MESSAGES[idx];
+function getRandomUrgencyMessage(): string {
+  const idx = Math.floor(Math.random() * URGENCY_MESSAGES.length);
+  return URGENCY_MESSAGES[idx];
 }
 
-// ================== Filtro de palavras ==================
+// ====== BLOQUEIO POR PALAVRAS ======
 
-/**
- * Verifica se o nome do produto contém alguma palavra bloqueada
- */
 function isBlockedByKeyword(offer: ProductOfferV2Node): boolean {
   const name = (offer.productName ?? '').toLowerCase();
 
@@ -125,31 +331,75 @@ function isBlockedByKeyword(offer: ProductOfferV2Node): boolean {
   return false;
 }
 
-// ================== Handler ==================
+// ====== SEQUÊNCIA DE SORTTYPE ======
+
+function buildSortSequenceFromCurrent(current: number): number[] {
+  const priority = [...SORT_PRIORITY];
+  const idx = priority.indexOf(current);
+
+  if (idx === -1) {
+    console.log(
+      `SortType atual (${current}) não está na prioridade [${priority.join(
+        ', '
+      )}]. Usando prioridade padrão.`
+    );
+    return priority;
+  }
+
+  return [...priority.slice(idx), ...priority.slice(0, idx)];
+}
+
+// ====== HANDLER PRINCIPAL ======
 
 export async function GET(req: NextRequest) {
   try {
-    let currentSortType = await getCurrentSortType();
+    const dbSortType = await getCurrentSortType();
 
     console.log('=== /api/send-offer INÍCIO ===');
-    console.log('SortType inicial:', currentSortType);
+    console.log('SortType inicial salvo no banco:', dbSortType);
     console.log(`Faixa de preço: R$ ${MIN_PRICE} - R$ ${MAX_PRICE}`);
     console.log(`Categorias de Pet: ${PET_CATEGORIES.length} IDs`);
+    console.log(`Limite de requisições por execução: ${MAX_TOTAL_REQUESTS_PER_RUN}`);
+
+    const shuffledCategories = shuffleArray(PET_CATEGORIES);
+    console.log('Categorias embaralhadas para esta execução.');
+
+    const sortSequence = buildSortSequenceFromCurrent(dbSortType);
+    console.log('Sequência de sortTypes nesta execução:', sortSequence.join(', '));
 
     let chosenOffer: ProductOfferV2Node | null = null;
     let chosenCategory: number | null = null;
+    let sortTypeUsed: number = dbSortType;
+    let totalRequests = 0;
 
-    // Loop pelos sortTypes
-    for (let sortTry = 0; sortTry < MAX_SORT_TRIES; sortTry++) {
+    const maxSortsToTry = Math.min(MAX_SORT_TRIES, sortSequence.length);
+
+    for (let sortTry = 0; sortTry < maxSortsToTry; sortTry++) {
+      const currentSortType = sortSequence[sortTry];
+
+      if (totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) {
+        console.log(
+          `⚠️ Atingiu limite total de ${MAX_TOTAL_REQUESTS_PER_RUN} requisições antes de tentar sortType=${currentSortType}.`
+        );
+        break;
+      }
+
       console.log(`\n--- Tentando sortType=${currentSortType} (tentativa ${sortTry + 1}) ---`);
 
-      // Loop pelas categorias de PET
-      for (const categoryId of PET_CATEGORIES) {
+      for (const categoryId of shuffledCategories) {
         console.log(`\n  >> Categoria ${categoryId}`);
 
-        // Loop pelas páginas desse sortType + categoria
-        for (let page = 1; page <= MAX_PAGES_PER_SORT; page++) {
-          console.log(`     Buscando página ${page} (cat=${categoryId}, sortType=${currentSortType})...`);
+        for (let page = 1; page <= MAX_PAGES_PER_SORT_DEFAULT; page++) {
+          if (totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) {
+            console.log(
+              `⚠️ Atingiu limite total de ${MAX_TOTAL_REQUESTS_PER_RUN} requisições nesta execução. Parando.`
+            );
+            break;
+          }
+
+          console.log(
+            `     Buscando página ${page} (cat=${categoryId}, sortType=${currentSortType})...`
+          );
 
           const { nodes, pageInfo } = await fetchProductOffers({
             appId: process.env.SHOPEE_APP_ID!,
@@ -158,25 +408,23 @@ export async function GET(req: NextRequest) {
             listType: 0,
             sortType: currentSortType,
             isAMSOffer: true,
-            limit: 20,
+            limit: ITEMS_PER_PAGE,
             page,
           });
 
-          console.log(`     Retornados ${nodes.length} itens.`);
+          totalRequests++;
+          console.log(
+            `     Retornados ${nodes.length} itens. (Total de requisições: ${totalRequests})`
+          );
 
           if (nodes.length === 0) {
             console.log('     Nenhum item retornado nesta página. Pulando para próxima categoria.');
-            break; // não tem mais itens nessa categoria
+            break;
           }
 
-          // Procurar o primeiro item que:
-          // - ainda não foi postado
-          // - está na faixa de preço
-          // - NÃO está bloqueado por palavra-chave
           for (const offer of nodes) {
             const itemIdBigInt = BigInt(offer.itemId);
 
-            // 1. Verificar se já foi postado
             const alreadyPosted = await prisma.posted_products.findUnique({
               where: { item_id: itemIdBigInt },
             });
@@ -186,10 +434,8 @@ export async function GET(req: NextRequest) {
               continue;
             }
 
-            // 2. Verificar se está na faixa de preço
             if (!isPriceInRange(offer)) {
-              const price =
-                parsePrice(offer.priceMin) || parsePrice(offer.priceMax);
+              const price = parsePrice(offer.priceMin) || parsePrice(offer.priceMax);
               console.log(
                 `     💰 Item ${offer.itemId} fora da faixa (R$ ${price.toFixed(
                   2
@@ -198,76 +444,63 @@ export async function GET(req: NextRequest) {
               continue;
             }
 
-            // 3. Verificar se passa no filtro de palavras-chave
             if (isBlockedByKeyword(offer)) {
-              // log já é feito dentro da função
               continue;
             }
 
-            // Encontrou um item válido!
             console.log(
               `     ✅ Oferta nova encontrada: itemId=${offer.itemId}, productName=${offer.productName}`
             );
             chosenOffer = offer;
             chosenCategory = categoryId;
+            sortTypeUsed = currentSortType;
             break;
           }
 
-          if (chosenOffer) {
-            // encontramos uma oferta nova, sair de todos os loops
-            break;
-          }
+          if (chosenOffer) break;
 
-          // Se não tem próxima página, sair do loop de páginas
           if (!pageInfo.hasNextPage) {
             console.log('     Não há mais páginas nesta categoria.');
             break;
           }
         }
 
-        if (chosenOffer) {
-          // encontramos, sair do loop de categorias
-          break;
-        }
+        if (chosenOffer || totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) break;
       }
 
-      if (chosenOffer) {
-        // encontramos, sair do loop de sortTypes
-        break;
-      }
+      if (chosenOffer || totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) break;
 
-      // Não encontrou nada nesse sortType, tentar o próximo
       console.log(
         `Nenhuma oferta nova encontrada com sortType=${currentSortType}. Indo para o próximo sortType.`
       );
-      currentSortType = await saveNextSortType(currentSortType);
     }
 
-    // Se depois de tudo não achou nada
     if (!chosenOffer) {
       console.log('❌ Nenhuma nova oferta encontrada após todas as tentativas.');
+      console.log(`Total de requisições realizadas: ${totalRequests}`);
       console.log('=== /api/send-offer FIM (sem nova oferta) ===');
       return NextResponse.json(
         {
           message:
             'Não foi encontrada nova oferta diferente na faixa de preço e categorias selecionadas.',
+          totalRequests,
         },
         { status: 200 }
       );
     }
 
-    // Atualiza sortType para a próxima vez (rodízio contínuo)
-    await saveNextSortType(currentSortType);
+    const currentIndexInSeq = sortSequence.indexOf(sortTypeUsed);
+    const nextSortTypeToPersist =
+      sortSequence[(currentIndexInSeq + 1) % sortSequence.length];
 
-    // 3) Montar mensagem com preço e CTA randômica
+    await saveNextSortType(nextSortTypeToPersist);
+
     const productName = chosenOffer.productName ?? 'Oferta Shopee';
     const offerLink = chosenOffer.offerLink ?? 'https://shopee.com.br';
 
-    // Normalizar priceMin / priceMax
     const priceMinNumber = parsePrice(chosenOffer.priceMin);
     const priceMaxNumber = parsePrice(chosenOffer.priceMax);
 
-    // Se não tiver preço válido, evita quebrar a mensagem
     const effectiveMin = priceMinNumber > 0 ? priceMinNumber : priceMaxNumber;
     const effectiveMax = priceMaxNumber > 0 ? priceMaxNumber : priceMinNumber;
 
@@ -282,30 +515,36 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // CTA randômica
-    const cta = getRandomCtaMessage();
+    // Detectar tipo de produto e escolher mensagens específicas
+    const kind = detectProductKind(productName);
+    const opening = getOpeningByKind(kind);
+    const cta = getCtaByKind(kind);
+    const urgency = getRandomUrgencyMessage();
 
-    const message = `*✨ ${productName}*
+    console.log(`     🏷️  Tipo de produto detectado: ${kind}`);
+
+    const message = `${opening}
+
+*✨ ${productName}*
 
 ${priceBlock}
 
 ${cta}
 ${offerLink}
 
-⚠️ Oferta por tempo limitado!`;
+${urgency}`;
 
     console.log('Mensagem montada:', message);
 
-    // 4) Enviar mensagem para Telegram
     await sendTelegramMessage({
       botToken: process.env.TELEGRAM_BOT_TOKEN!,
       chatId: process.env.TELEGRAM_CHAT_ID!,
       text: message,
+      parseMode: 'Markdown',
     });
 
     console.log('Mensagem enviada para o Telegram.');
 
-    // 5) Registrar que esse item foi postado
     const itemIdBigInt = BigInt(chosenOffer.itemId);
     await prisma.posted_products.create({
       data: {
@@ -315,6 +554,7 @@ ${offerLink}
     });
 
     console.log('Item registrado em posted_products com sucesso.');
+    console.log(`Total de requisições realizadas: ${totalRequests}`);
     console.log('=== /api/send-offer FIM (sucesso) ===');
 
     return NextResponse.json(
@@ -322,7 +562,10 @@ ${offerLink}
         message: 'Oferta enviada com sucesso',
         itemId: chosenOffer.itemId,
         categoryId: chosenCategory,
-        sortTypeUsed: currentSortType,
+        sortTypeUsed,
+        nextSortTypeSaved: nextSortTypeToPersist,
+        totalRequests,
+        productKind: kind,
       },
       { status: 200 }
     );

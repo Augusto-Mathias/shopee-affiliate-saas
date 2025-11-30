@@ -1,4 +1,5 @@
-import { prisma } from './prisma';
+//import { prisma } from './prisma';
+import { prisma } from '@/src/lib/db/prisma';
 
 const SORT_KEY = 'sortType';
 
