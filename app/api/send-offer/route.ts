@@ -363,14 +363,14 @@ export async function GET(req: NextRequest) {
     const shuffledCategories = shuffleArray(PET_CATEGORIES);
     const sortSequence = buildSortSequenceFromCurrent(dbSortType);
 
-    let chosenOffer: ProductOfferV2Node | null = null;
+let chosenOffer: ProductOfferV2Node | null = null;
     let chosenCategory: number | null = null;
     let sortTypeUsed: number = dbSortType;
     let totalRequests = 0;
     const maxSortsToTry = Math.min(4, sortSequence.length);
-    const MAX_SHOPEE_PAGE_LIMIT = 50;
+    const MAX_SHOPEE_PAGE_LIMIT = 40; // Definido uma única vez
 
-    for (let sortTry = 0; sortTry < maxSortsToTry; sortTry++) {
+for (let sortTry = 0; sortTry < maxSortsToTry; sortTry++) {
       const currentSortType = sortSequence[sortTry];
       if (totalRequests >= settings.maxPagesPerRun) {
         console.log(`⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições antes de tentar sortType=${currentSortType}.`);
@@ -379,24 +379,24 @@ export async function GET(req: NextRequest) {
 
       console.log(`\n--- Tentando sortType=${currentSortType} (tentativa ${sortTry + 1}) ---`);
 
-      for (const categoryId of shuffledCategories) {
+     for (const categoryId of shuffledCategories) {
         console.log(`\n  >> Categoria ${categoryId}`);
 
-       const MAX_SHOPEE_PAGE_LIMIT = 50;
-const maxPages = Math.min(settings.maxPagesPerRun, MAX_SHOPEE_PAGE_LIMIT);
+       // Calcular maxPages uma única vez por categoria
+        const maxPages = Math.min(settings.maxPagesPerRun, MAX_SHOPEE_PAGE_LIMIT);
 
 if (settings.maxPagesPerRun > MAX_SHOPEE_PAGE_LIMIT) {
-  console.warn(`⚠️ settings.maxPagesPerRun (${settings.maxPagesPerRun}) excede o limite da Shopee (${MAX_SHOPEE_PAGE_LIMIT}). Usando ${maxPages} páginas.`);
-}
+          console.warn(`⚠️ settings.maxPagesPerRun (${settings.maxPagesPerRun}) excede o limite da Shopee (${MAX_SHOPEE_PAGE_LIMIT}). Usando ${maxPages} páginas.`);
+        }
 
 // Garante que page nunca ultrapasse o limite da Shopee
-for (let page = 1; page <= maxPages; page++) {
-  if (totalRequests >= settings.maxPagesPerRun) {
-    console.log(`⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições nesta execução. Parando.`);
-    break;
-  }
+        for (let page = 1; page <= maxPages; page++) {
+          if (totalRequests >= settings.maxPagesPerRun) {
+            console.log(`⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições nesta execução. Parando.`);
+            break;
+          }
 
-          console.log(`     Buscando página ${page} (cat=${categoryId}, sortType=${currentSortType})...`);
+      console.log(`     Buscando página ${page} (cat=${categoryId}, sortType=${currentSortType})...`);
           const { nodes, pageInfo } = await fetchProductOffers({
             appId: process.env.SHOPEE_APP_ID!,
             secret: process.env.SHOPEE_SECRET!,
@@ -408,15 +408,15 @@ for (let page = 1; page <= maxPages; page++) {
             page,
           });
 
-          totalRequests++;
+         totalRequests++;
           console.log(`     Retornados ${nodes.length} itens. (Total de requisições: ${totalRequests})`);
 
-          if (nodes.length === 0) {
+        if (nodes.length === 0) {
             console.log('     Nenhum item retornado nesta página. Pulando para próxima categoria.');
             break;
           }
 
-          for (const offer of nodes) {
+        for (const offer of nodes) {
             const itemIdStr = toItemIdString(offer.itemId);
             if (!itemIdStr) {
               console.warn(`     ⚠️ Item sem ID válido (offer.itemId=${offer.itemId}). Pulando.`);
@@ -439,16 +439,16 @@ for (let page = 1; page <= maxPages; page++) {
               continue;
             }
 
-            const priceMin = parsePrice(offer.priceMin);
+           const priceMin = parsePrice(offer.priceMin);
             const priceMax = parsePrice(offer.priceMax);
             const price = priceMin > 0 ? priceMin : priceMax;
 
-            if (price < settings.minPrice || price > settings.maxPrice) {
+           if (price < settings.minPrice || price > settings.maxPrice) {
               console.log(`     💰 Item ${offer.itemId} fora da faixa (R$ ${price.toFixed(2)}). Pulando.`);
               continue;
             }
 
-            if (isBlockedByKeyword(offer)) {
+           if (isBlockedByKeyword(offer)) {
               continue;
             }
 
