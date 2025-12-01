@@ -8,89 +8,89 @@ datasource db {
 }
 
 model ConversionReport {
-  id                 Int      @id @default(autoincrement())
-  conversionId       BigInt   @unique
-  purchaseTime       Int?
-  clickTime          Int?
-  orderId            String?
-  buyerType          String?
-  attributionType    String?
-  device             String?
-  utmContent         String?
-  referrer           String?
-  totalCommission    Decimal?  @db.Decimal(28, 8)
-  sellerCommission   Decimal?  @db.Decimal(28, 8)
-  netCommission      Decimal?  @db.Decimal(28, 8)
-  fraudStatus        String?
-  campaignType       String?
+  id                  Int      @id @default(autoincrement())
+  conversionId        BigInt   @unique
+  purchaseTime        Int?
+  clickTime           Int?
+  orderId             String?
+  buyerType           String?
+  attributionType     String?
+  device              String?
+  utmContent          String?
+  referrer            String?
+  totalCommission     Decimal? @db.Decimal(28, 8)
+  sellerCommission    Decimal? @db.Decimal(28, 8)
+  netCommission       Decimal? @db.Decimal(28, 8)
+  fraudStatus         String?
+  campaignType        String?
   campaignPartnerName String?
-  orders             Json?     // store orders array (or normalize to ConversionOrder)
-  rawJson            Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  orders              Json?
+  rawJson             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model ConversionOrder {
-  id                 Int      @id @default(autoincrement())
-  conversionId       BigInt
-  orderId            String
-  orderStatus        String?
-  shopId             BigInt?
-  shopName           String?
-  shopType           String?
-  completeTime       Int?
-  items              Json?
-  rawJson            Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  conversionId BigInt
+  orderId      String
+  orderStatus  String?
+  shopId       BigInt?
+  shopName     String?
+  shopType     String?
+  completeTime Int?
+  items        Json?
+  rawJson      Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([conversionId])
 }
 
 model ConversionOrderItem {
-  id                      Int      @id @default(autoincrement())
-  conversionOrderId       Int
-  itemId                  BigInt?
-  itemName                String?
-  itemPrice               Decimal?  @db.Decimal(28, 8)
-  actualAmount            Decimal?  @db.Decimal(28, 8)
-  qty                     Int?
-  itemTotalCommission     Decimal?  @db.Decimal(28, 8)
-  itemSellerCommission    Decimal?  @db.Decimal(28, 8)
-  itemShopeeCommission    Decimal?  @db.Decimal(28, 8)
+  id                       Int      @id @default(autoincrement())
+  conversionOrderId        Int
+  itemId                   BigInt?
+  itemName                 String?
+  itemPrice                Decimal? @db.Decimal(28, 8)
+  actualAmount             Decimal? @db.Decimal(28, 8)
+  qty                      Int?
+  itemTotalCommission      Decimal? @db.Decimal(28, 8)
+  itemSellerCommission     Decimal? @db.Decimal(28, 8)
+  itemShopeeCommission     Decimal? @db.Decimal(28, 8)
   itemSellerCommissionRate String?
   itemShopeeCommissionRate String?
-  modelId                 BigInt?
-  promotionId             String?
-  globalCategoryLv1Name   String?
-  globalCategoryLv2Name   String?
-  globalCategoryLv3Name   String?
-  fraudStatus             String?
-  displayItemStatus       String?
-  rawJson                 Json?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  modelId                  BigInt?
+  promotionId              String?
+  globalCategoryLv1Name    String?
+  globalCategoryLv2Name    String?
+  globalCategoryLv3Name    String?
+  fraudStatus              String?
+  displayItemStatus        String?
+  rawJson                  Json?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
   @@index([conversionOrderId])
 }
 
 model ValidatedReport {
-  id                 Int      @id @default(autoincrement())
-  conversionId       BigInt   @unique
-  purchaseTime       Int?
-  clickTime          Int?
-  totalCommission    Decimal?  @db.Decimal(28, 8)
-  sellerCommission   Decimal?  @db.Decimal(28, 8)
-  shopeeCommissionCapped Decimal? @db.Decimal(28,8)
-  netCommission      Decimal?  @db.Decimal(28, 8)
-  buyerType          String?
-  utmContent         String?
-  device             String?
-  referrer           String?
-  orders             Json?
-  rawJson            Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                      Int      @id @default(autoincrement())
+  conversionId            BigInt   @unique
+  purchaseTime            Int?
+  clickTime               Int?
+  totalCommission         Decimal? @db.Decimal(28, 8)
+  sellerCommission        Decimal? @db.Decimal(28, 8)
+  shopeeCommissionCapped  Decimal? @db.Decimal(28, 8)
+  netCommission           Decimal? @db.Decimal(28, 8)
+  buyerType               String?
+  utmContent              String?
+  device                  String?
+  referrer                String?
+  orders                  Json?
+  rawJson                 Json?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 model posted_products {

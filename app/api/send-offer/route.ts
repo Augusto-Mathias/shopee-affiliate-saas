@@ -12,15 +12,15 @@ async function getEffectiveUserSettings(prisma: any) {
   const defaultSettings = {
     minPrice: 1.0,
     maxPrice: 100.0,
-    minCommissionRate: 2.5, // percent
-    maxCommissionRate: 15.0, // percent
+    minCommissionRate: 2.5,
+    maxCommissionRate: 15.0,
     itemsPerPage: 100,
     maxPagesPerRun: 5,
   };
 
   try {
     const row = await prisma.user_settings.findUnique({
-      where: { user_identifier: "default" },
+      where: { user_identifier: 'default' },
     });
 
     return {
@@ -36,7 +36,7 @@ async function getEffectiveUserSettings(prisma: any) {
       maxPagesPerRun: row?.max_pages_per_run ?? defaultSettings.maxPagesPerRun,
     };
   } catch (err: any) {
-    console.warn("⚠️ user_settings lookup failed, using defaults:", err?.code ?? err?.message);
+    console.warn('⚠️ user_settings lookup failed, using defaults:', err?.code ?? err?.message);
     return defaultSettings;
   }
 }
@@ -64,7 +64,6 @@ const BLOCKED_KEYWORDS = [
   'aves',
 ];
 
-// ====== TIPOS DE PRODUTO ======
 type ProductKind = 'FOOD' | 'SNACK' | 'TOY' | 'HYGIENE' | 'ACCESSORY' | 'GENERIC';
 
 function detectProductKind(nameRaw: string | null | undefined): ProductKind {
@@ -157,7 +156,6 @@ function detectProductKind(nameRaw: string | null | undefined): ProductKind {
   return 'GENERIC';
 }
 
-// ====== HELPERS GERAIS ======
 function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -191,7 +189,38 @@ function buildPriceText(priceMin: number, priceMax: number, discountRate?: numbe
   return `💥 *Por apenas:* ${minStr}`;
 }
 
-// ====== ABERTURAS POR TIPO DE PRODUTO ======
+// ====== NORMALIZAÇÃO SIMPLES (SOMENTE STRING) ======
+function toItemIdString(raw: any): string | null {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  return s.length ? s : null;
+}
+
+// ====== BLOQUEIO POR PALAVRAS (igual) ======
+function isBlockedByKeyword(offer: ProductOfferV2Node): boolean {
+  const name = (offer.productName ?? '').toLowerCase();
+  for (const keyword of BLOCKED_KEYWORDS) {
+    if (!keyword) continue;
+    if (name.includes(keyword.toLowerCase())) {
+      console.log(`     🚫 Item ${offer.itemId} bloqueado por palavra-chave "${keyword}" no título.`);
+      return true;
+    }
+  }
+  return false;
+}
+
+// ====== SEQUÊNCIA DE SORTTYPE (igual) ======
+function buildSortSequenceFromCurrent(current: number): number[] {
+  const priority = [...SORT_PRIORITY];
+  const idx = priority.indexOf(current);
+  if (idx === -1) {
+    console.log(`SortType atual (${current}) não está na prioridade [${priority.join(', ')}]. Usando prioridade padrão.`);
+    return priority;
+  }
+  return [...priority.slice(idx), ...priority.slice(0, idx)];
+}
+
+// ====== ABERTURAS / CTA / URGENCY (mantive suas listas originais) ======
 const OPENING_BY_KIND: Record<ProductKind, string[]> = {
   FOOD: [
     '🍽️ *Economia na ração pro seu pet:*',
@@ -241,7 +270,6 @@ function getOpeningByKind(kind: ProductKind): string {
   return list[idx];
 }
 
-// ====== CTA POR TIPO DE PRODUTO ======
 const CTA_BY_KIND: Record<ProductKind, string[]> = {
   FOOD: [
     '🍽️ Veja os sabores e tamanhos disponíveis aqui:',
@@ -292,7 +320,6 @@ function getCtaByKind(kind: ProductKind): string {
   return list[idx];
 }
 
-// ====== URGÊNCIA / RODAPÉ ======
 const URGENCY_MESSAGES: string[] = [
   '⚠️ Oferta por tempo limitado!',
   '⏰ Corre! Promoção válida apenas hoje!',
@@ -321,45 +348,10 @@ function getRandomUrgencyMessage(): string {
   return URGENCY_MESSAGES[idx];
 }
 
-// ====== BLOQUEIO POR PALAVRAS ======
-function isBlockedByKeyword(offer: ProductOfferV2Node): boolean {
-  const name = (offer.productName ?? '').toLowerCase();
-
-  for (const keyword of BLOCKED_KEYWORDS) {
-    if (!keyword) continue;
-    if (name.includes(keyword.toLowerCase())) {
-      console.log(
-        `     🚫 Item ${offer.itemId} bloqueado por palavra-chave "${keyword}" no título.`
-      );
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// ====== SEQUÊNCIA DE SORTTYPE ======
-function buildSortSequenceFromCurrent(current: number): number[] {
-  const priority = [...SORT_PRIORITY];
-  const idx = priority.indexOf(current);
-
-  if (idx === -1) {
-    console.log(
-      `SortType atual (${current}) não está na prioridade [${priority.join(
-        ', '
-      )}]. Usando prioridade padrão.`
-    );
-    return priority;
-  }
-
-  return [...priority.slice(idx), ...priority.slice(0, idx)];
-}
-
 // ====== HANDLER PRINCIPAL ======
 export async function GET(req: NextRequest) {
   try {
     const settings = await getEffectiveUserSettings(prisma);
-
     const dbSortType = await getCurrentSortType();
 
     console.log('=== /api/send-offer INÍCIO ===');
@@ -369,28 +361,19 @@ export async function GET(req: NextRequest) {
     console.log(`Limite de requisições por execução: ${settings.maxPagesPerRun}`);
 
     const shuffledCategories = shuffleArray(PET_CATEGORIES);
-    console.log('Categorias embaralhadas para esta execução.');
-
     const sortSequence = buildSortSequenceFromCurrent(dbSortType);
-    console.log('Sequência de sortTypes nesta execução:', sortSequence.join(', '));
 
     let chosenOffer: ProductOfferV2Node | null = null;
     let chosenCategory: number | null = null;
     let sortTypeUsed: number = dbSortType;
     let totalRequests = 0;
-
     const maxSortsToTry = Math.min(4, sortSequence.length);
-
-    // Limite da Shopee para páginas
     const MAX_SHOPEE_PAGE_LIMIT = 50;
 
     for (let sortTry = 0; sortTry < maxSortsToTry; sortTry++) {
       const currentSortType = sortSequence[sortTry];
-
       if (totalRequests >= settings.maxPagesPerRun) {
-        console.log(
-          `⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições antes de tentar sortType=${currentSortType}.`
-        );
+        console.log(`⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições antes de tentar sortType=${currentSortType}.`);
         break;
       }
 
@@ -399,26 +382,21 @@ export async function GET(req: NextRequest) {
       for (const categoryId of shuffledCategories) {
         console.log(`\n  >> Categoria ${categoryId}`);
 
-        // Garante que não ultrapassamos o limite de páginas da Shopee
-        const maxPages = Math.min(settings.maxPagesPerRun, MAX_SHOPEE_PAGE_LIMIT);
-        if (settings.maxPagesPerRun > MAX_SHOPEE_PAGE_LIMIT) {
-          console.warn(
-            `⚠️ settings.maxPagesPerRun (${settings.maxPagesPerRun}) excede o limite da Shopee (${MAX_SHOPEE_PAGE_LIMIT}). Usando ${maxPages} páginas.`
-          );
-        }
+       const MAX_SHOPEE_PAGE_LIMIT = 50;
+const maxPages = Math.min(settings.maxPagesPerRun, MAX_SHOPEE_PAGE_LIMIT);
 
-        for (let page = 1; page <= maxPages; page++) {
-          if (totalRequests >= settings.maxPagesPerRun) {
-            console.log(
-              `⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições nesta execução. Parando.`
-            );
-            break;
-          }
+if (settings.maxPagesPerRun > MAX_SHOPEE_PAGE_LIMIT) {
+  console.warn(`⚠️ settings.maxPagesPerRun (${settings.maxPagesPerRun}) excede o limite da Shopee (${MAX_SHOPEE_PAGE_LIMIT}). Usando ${maxPages} páginas.`);
+}
 
-          console.log(
-            `     Buscando página ${page} (cat=${categoryId}, sortType=${currentSortType})...`
-          );
+// Garante que page nunca ultrapasse o limite da Shopee
+for (let page = 1; page <= maxPages; page++) {
+  if (totalRequests >= settings.maxPagesPerRun) {
+    console.log(`⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições nesta execução. Parando.`);
+    break;
+  }
 
+          console.log(`     Buscando página ${page} (cat=${categoryId}, sortType=${currentSortType})...`);
           const { nodes, pageInfo } = await fetchProductOffers({
             appId: process.env.SHOPEE_APP_ID!,
             secret: process.env.SHOPEE_SECRET!,
@@ -431,9 +409,7 @@ export async function GET(req: NextRequest) {
           });
 
           totalRequests++;
-          console.log(
-            `     Retornados ${nodes.length} itens. (Total de requisições: ${totalRequests})`
-          );
+          console.log(`     Retornados ${nodes.length} itens. (Total de requisições: ${totalRequests})`);
 
           if (nodes.length === 0) {
             console.log('     Nenhum item retornado nesta página. Pulando para próxima categoria.');
@@ -441,11 +417,22 @@ export async function GET(req: NextRequest) {
           }
 
           for (const offer of nodes) {
-            const itemIdBigInt = BigInt(offer.itemId);
+            const itemIdStr = toItemIdString(offer.itemId);
+            if (!itemIdStr) {
+              console.warn(`     ⚠️ Item sem ID válido (offer.itemId=${offer.itemId}). Pulando.`);
+              continue;
+            }
 
-            const alreadyPosted = await prisma.posted_products.findUnique({
-              where: { item_id: itemIdBigInt },
-            });
+            // consulta por string (seu schema usa String)
+            let alreadyPosted = null;
+            try {
+              alreadyPosted = await prisma.posted_products.findUnique({
+                where: { item_id: itemIdStr },
+              });
+            } catch (err) {
+              console.error('Erro ao consultar posted_products por string:', err);
+              continue;
+            }
 
             if (alreadyPosted) {
               console.log(`     ⏭️  Item ${offer.itemId} já postado. Pulando.`);
@@ -457,11 +444,7 @@ export async function GET(req: NextRequest) {
             const price = priceMin > 0 ? priceMin : priceMax;
 
             if (price < settings.minPrice || price > settings.maxPrice) {
-              console.log(
-                `     💰 Item ${offer.itemId} fora da faixa (R$ ${price.toFixed(
-                  2
-                )}). Pulando.`
-              );
+              console.log(`     💰 Item ${offer.itemId} fora da faixa (R$ ${price.toFixed(2)}). Pulando.`);
               continue;
             }
 
@@ -469,9 +452,7 @@ export async function GET(req: NextRequest) {
               continue;
             }
 
-            console.log(
-              `     ✅ Oferta nova encontrada: itemId=${offer.itemId}, productName=${offer.productName}`
-            );
+            console.log(`     ✅ Oferta nova encontrada: itemId=${offer.itemId}, productName=${offer.productName}`);
             chosenOffer = offer;
             chosenCategory = categoryId;
             sortTypeUsed = currentSortType;
@@ -479,7 +460,6 @@ export async function GET(req: NextRequest) {
           }
 
           if (chosenOffer) break;
-
           if (!pageInfo.hasNextPage) {
             console.log('     Não há mais páginas nesta categoria.');
             break;
@@ -491,9 +471,7 @@ export async function GET(req: NextRequest) {
 
       if (chosenOffer || totalRequests >= settings.maxPagesPerRun) break;
 
-      console.log(
-        `Nenhuma oferta nova encontrada com sortType=${currentSortType}. Indo para o próximo sortType.`
-      );
+      console.log(`Nenhuma oferta nova encontrada com sortType=${currentSortType}. Indo para o próximo sortType.`);
     }
 
     if (!chosenOffer) {
@@ -502,8 +480,7 @@ export async function GET(req: NextRequest) {
       console.log('=== /api/send-offer FIM (sem nova oferta) ===');
       return NextResponse.json(
         {
-          message:
-            'Não foi encontrada nova oferta diferente na faixa de preço e categorias selecionadas.',
+          message: 'Não foi encontrada nova oferta diferente na faixa de preço e categorias selecionadas.',
           totalRequests,
         },
         { status: 200 }
@@ -511,17 +488,13 @@ export async function GET(req: NextRequest) {
     }
 
     const currentIndexInSeq = sortSequence.indexOf(sortTypeUsed);
-    const nextSortTypeToPersist =
-      sortSequence[(currentIndexInSeq + 1) % sortSequence.length];
-
+    const nextSortTypeToPersist = sortSequence[(currentIndexInSeq + 1) % sortSequence.length];
     await saveNextSortType(nextSortTypeToPersist);
 
     const productName = chosenOffer.productName ?? 'Oferta Shopee';
     const offerLink = chosenOffer.offerLink ?? 'https://shopee.com.br';
-
     const priceMinNumber = parsePrice(chosenOffer.priceMin);
     const priceMaxNumber = parsePrice(chosenOffer.priceMax);
-
     const effectiveMin = priceMinNumber > 0 ? priceMinNumber : priceMaxNumber;
     const effectiveMax = priceMaxNumber > 0 ? priceMaxNumber : priceMinNumber;
 
@@ -530,9 +503,7 @@ export async function GET(req: NextRequest) {
       priceBlock = buildPriceText(
         effectiveMin,
         effectiveMax > 0 ? effectiveMax : effectiveMin,
-        typeof chosenOffer.priceDiscountRate === 'number'
-          ? chosenOffer.priceDiscountRate
-          : null
+        typeof chosenOffer.priceDiscountRate === 'number' ? chosenOffer.priceDiscountRate : null
       );
     }
 
@@ -565,22 +536,31 @@ ${urgency}`;
 
     console.log('Mensagem enviada para o Telegram.');
 
-    const itemIdBigInt = BigInt(chosenOffer.itemId);
-    await prisma.posted_products.create({
-      data: {
-        item_id: itemIdBigInt,
-        posted_at: new Date(),
-      },
-    });
+    // registrar chosenOffer como STRING (schema posted_products.item_id é String)
+    const itemIdToSave = toItemIdString(chosenOffer.itemId);
+    if (itemIdToSave) {
+      try {
+        await prisma.posted_products.create({
+          data: {
+            item_id: itemIdToSave,
+            posted_at: new Date(),
+          },
+        });
+        console.log('Item registrado em posted_products com sucesso.');
+      } catch (err) {
+        console.error('Erro ao criar posted_products (string):', err);
+      }
+    } else {
+      console.warn('chosenOffer sem itemId válido, não foi possível registrar em posted_products.');
+    }
 
-    console.log('Item registrado em posted_products com sucesso.');
     console.log(`Total de requisições realizadas: ${totalRequests}`);
     console.log('=== /api/send-offer FIM (sucesso) ===');
 
     return NextResponse.json(
       {
         message: 'Oferta enviada com sucesso',
-        itemId: chosenOffer.itemId,
+        itemId: String(chosenOffer.itemId),
         categoryId: chosenCategory,
         sortTypeUsed,
         nextSortTypeSaved: nextSortTypeToPersist,
