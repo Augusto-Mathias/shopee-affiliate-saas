@@ -1,3 +1,4 @@
+// app/api/send-offer/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/src/lib/db/prisma';
 import { sendTelegramMessage } from '@/src/lib/telegram/telegram.client';
@@ -6,17 +7,42 @@ import { getCurrentSortType, saveNextSortType } from '@/src/lib/db/settings';
 import { PET_CATEGORIES } from '@/src/lib/shopee/categories';
 import type { ProductOfferV2Node } from '@/src/lib/shopee/shopee.types';
 
-// ====== CONFIGURAÇÕES GERAIS ======
+// ====== HELPER PARA CARREGAR SETTINGS COM SEGURANÇA ======
+async function getEffectiveUserSettings(prisma: any) {
+  const defaultSettings = {
+    minPrice: 1.0,
+    maxPrice: 100.0,
+    minCommissionRate: 2.5, // percent
+    maxCommissionRate: 15.0, // percent
+    itemsPerPage: 100,
+    maxPagesPerRun: 5,
+  };
 
-const MAX_SORT_TRIES = 4;
-const MAX_PAGES_PER_SORT_DEFAULT = 3;
-const ITEMS_PER_PAGE = 50;
-const MIN_PRICE = 1;
-const MAX_PRICE = 100;
-const MAX_TOTAL_REQUESTS_PER_RUN = 8;
+  try {
+    const row = await prisma.user_settings.findUnique({
+      where: { user_identifier: "default" },
+    });
 
+    return {
+      minPrice: row?.min_price ? Number(row.min_price) : defaultSettings.minPrice,
+      maxPrice: row?.max_price ? Number(row.max_price) : defaultSettings.maxPrice,
+      minCommissionRate: row?.min_commission_rate
+        ? Number(row.min_commission_rate)
+        : defaultSettings.minCommissionRate,
+      maxCommissionRate: row?.max_commission_rate
+        ? Number(row.max_commission_rate)
+        : defaultSettings.maxCommissionRate,
+      itemsPerPage: row?.items_per_page ?? defaultSettings.itemsPerPage,
+      maxPagesPerRun: row?.max_pages_per_run ?? defaultSettings.maxPagesPerRun,
+    };
+  } catch (err: any) {
+    console.warn("⚠️ user_settings lookup failed, using defaults:", err?.code ?? err?.message);
+    return defaultSettings;
+  }
+}
+
+// ====== CONFIGURAÇÕES DINÂMICAS ======
 const SORT_PRIORITY: number[] = [1, 4, 2, 5];
-
 const BLOCKED_KEYWORDS = [
   'feno',
   'coast cross',
@@ -39,14 +65,12 @@ const BLOCKED_KEYWORDS = [
 ];
 
 // ====== TIPOS DE PRODUTO ======
-
 type ProductKind = 'FOOD' | 'SNACK' | 'TOY' | 'HYGIENE' | 'ACCESSORY' | 'GENERIC';
 
 function detectProductKind(nameRaw: string | null | undefined): ProductKind {
   if (!nameRaw) return 'GENERIC';
   const name = nameRaw.toLowerCase();
 
-  // Ração / alimento principal
   if (
     name.includes('ração') ||
     name.includes('raçao') ||
@@ -65,7 +89,6 @@ function detectProductKind(nameRaw: string | null | undefined): ProductKind {
     return 'FOOD';
   }
 
-  // Petiscos / snacks
   if (
     name.includes('petisco') ||
     name.includes('bifinho') ||
@@ -78,7 +101,6 @@ function detectProductKind(nameRaw: string | null | undefined): ProductKind {
     return 'SNACK';
   }
 
-  // Brinquedos
   if (
     name.includes('brinquedo') ||
     name.includes('bola') ||
@@ -94,7 +116,6 @@ function detectProductKind(nameRaw: string | null | undefined): ProductKind {
     return 'TOY';
   }
 
-  // Higiene / limpeza / tapete / banheiro
   if (
     name.includes('tapete higiênico') ||
     name.includes('tapete higienico') ||
@@ -114,7 +135,6 @@ function detectProductKind(nameRaw: string | null | undefined): ProductKind {
     return 'HYGIENE';
   }
 
-  // Acessórios gerais
   if (
     name.includes('coleira') ||
     name.includes('peitoral') ||
@@ -138,7 +158,6 @@ function detectProductKind(nameRaw: string | null | undefined): ProductKind {
 }
 
 // ====== HELPERS GERAIS ======
-
 function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -153,14 +172,6 @@ function parsePrice(price: string | number | null | undefined): number {
   const priceStr = typeof price === 'string' ? price.replace(',', '.') : String(price);
   const num = parseFloat(priceStr);
   return Number.isNaN(num) ? 0 : num;
-}
-
-function isPriceInRange(offer: ProductOfferV2Node): boolean {
-  const priceMin = parsePrice(offer.priceMin);
-  const priceMax = parsePrice(offer.priceMax);
-  const price = priceMin > 0 ? priceMin : priceMax;
-  if (price === 0) return false;
-  return price >= MIN_PRICE && price <= MAX_PRICE;
 }
 
 function buildPriceText(priceMin: number, priceMax: number, discountRate?: number | null): string {
@@ -181,7 +192,6 @@ function buildPriceText(priceMin: number, priceMax: number, discountRate?: numbe
 }
 
 // ====== ABERTURAS POR TIPO DE PRODUTO ======
-
 const OPENING_BY_KIND: Record<ProductKind, string[]> = {
   FOOD: [
     '🍽️ *Economia na ração pro seu pet:*',
@@ -232,7 +242,6 @@ function getOpeningByKind(kind: ProductKind): string {
 }
 
 // ====== CTA POR TIPO DE PRODUTO ======
-
 const CTA_BY_KIND: Record<ProductKind, string[]> = {
   FOOD: [
     '🍽️ Veja os sabores e tamanhos disponíveis aqui:',
@@ -284,7 +293,6 @@ function getCtaByKind(kind: ProductKind): string {
 }
 
 // ====== URGÊNCIA / RODAPÉ ======
-
 const URGENCY_MESSAGES: string[] = [
   '⚠️ Oferta por tempo limitado!',
   '⏰ Corre! Promoção válida apenas hoje!',
@@ -314,7 +322,6 @@ function getRandomUrgencyMessage(): string {
 }
 
 // ====== BLOQUEIO POR PALAVRAS ======
-
 function isBlockedByKeyword(offer: ProductOfferV2Node): boolean {
   const name = (offer.productName ?? '').toLowerCase();
 
@@ -332,7 +339,6 @@ function isBlockedByKeyword(offer: ProductOfferV2Node): boolean {
 }
 
 // ====== SEQUÊNCIA DE SORTTYPE ======
-
 function buildSortSequenceFromCurrent(current: number): number[] {
   const priority = [...SORT_PRIORITY];
   const idx = priority.indexOf(current);
@@ -350,16 +356,17 @@ function buildSortSequenceFromCurrent(current: number): number[] {
 }
 
 // ====== HANDLER PRINCIPAL ======
-
 export async function GET(req: NextRequest) {
   try {
+    const settings = await getEffectiveUserSettings(prisma);
+
     const dbSortType = await getCurrentSortType();
 
     console.log('=== /api/send-offer INÍCIO ===');
     console.log('SortType inicial salvo no banco:', dbSortType);
-    console.log(`Faixa de preço: R$ ${MIN_PRICE} - R$ ${MAX_PRICE}`);
+    console.log(`Faixa de preço: R$ ${settings.minPrice} - R$ ${settings.maxPrice}`);
     console.log(`Categorias de Pet: ${PET_CATEGORIES.length} IDs`);
-    console.log(`Limite de requisições por execução: ${MAX_TOTAL_REQUESTS_PER_RUN}`);
+    console.log(`Limite de requisições por execução: ${settings.maxPagesPerRun}`);
 
     const shuffledCategories = shuffleArray(PET_CATEGORIES);
     console.log('Categorias embaralhadas para esta execução.');
@@ -372,14 +379,14 @@ export async function GET(req: NextRequest) {
     let sortTypeUsed: number = dbSortType;
     let totalRequests = 0;
 
-    const maxSortsToTry = Math.min(MAX_SORT_TRIES, sortSequence.length);
+    const maxSortsToTry = Math.min(4, sortSequence.length);
 
     for (let sortTry = 0; sortTry < maxSortsToTry; sortTry++) {
       const currentSortType = sortSequence[sortTry];
 
-      if (totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) {
+      if (totalRequests >= settings.maxPagesPerRun) {
         console.log(
-          `⚠️ Atingiu limite total de ${MAX_TOTAL_REQUESTS_PER_RUN} requisições antes de tentar sortType=${currentSortType}.`
+          `⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições antes de tentar sortType=${currentSortType}.`
         );
         break;
       }
@@ -389,10 +396,10 @@ export async function GET(req: NextRequest) {
       for (const categoryId of shuffledCategories) {
         console.log(`\n  >> Categoria ${categoryId}`);
 
-        for (let page = 1; page <= MAX_PAGES_PER_SORT_DEFAULT; page++) {
-          if (totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) {
+        for (let page = 1; page <= settings.maxPagesPerRun; page++) {
+          if (totalRequests >= settings.maxPagesPerRun) {
             console.log(
-              `⚠️ Atingiu limite total de ${MAX_TOTAL_REQUESTS_PER_RUN} requisições nesta execução. Parando.`
+              `⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições nesta execução. Parando.`
             );
             break;
           }
@@ -408,7 +415,7 @@ export async function GET(req: NextRequest) {
             listType: 0,
             sortType: currentSortType,
             isAMSOffer: true,
-            limit: ITEMS_PER_PAGE,
+            limit: settings.itemsPerPage,
             page,
           });
 
@@ -434,8 +441,11 @@ export async function GET(req: NextRequest) {
               continue;
             }
 
-            if (!isPriceInRange(offer)) {
-              const price = parsePrice(offer.priceMin) || parsePrice(offer.priceMax);
+            const priceMin = parsePrice(offer.priceMin);
+            const priceMax = parsePrice(offer.priceMax);
+            const price = priceMin > 0 ? priceMin : priceMax;
+
+            if (price < settings.minPrice || price > settings.maxPrice) {
               console.log(
                 `     💰 Item ${offer.itemId} fora da faixa (R$ ${price.toFixed(
                   2
@@ -465,10 +475,10 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        if (chosenOffer || totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) break;
+        if (chosenOffer || totalRequests >= settings.maxPagesPerRun) break;
       }
 
-      if (chosenOffer || totalRequests >= MAX_TOTAL_REQUESTS_PER_RUN) break;
+      if (chosenOffer || totalRequests >= settings.maxPagesPerRun) break;
 
       console.log(
         `Nenhuma oferta nova encontrada com sortType=${currentSortType}. Indo para o próximo sortType.`
@@ -515,7 +525,6 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Detectar tipo de produto e escolher mensagens específicas
     const kind = detectProductKind(productName);
     const opening = getOpeningByKind(kind);
     const cta = getCtaByKind(kind);
@@ -569,10 +578,10 @@ ${urgency}`;
       },
       { status: 200 }
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error('Erro em /api/send-offer:', error);
     return NextResponse.json(
-      { error: 'Erro ao enviar oferta' },
+      { error: 'Erro ao enviar oferta', details: error?.message || 'Erro desconhecido' },
       { status: 500 }
     );
   }
