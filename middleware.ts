@@ -27,9 +27,11 @@ export function middleware(req: NextRequest) {
     const base64Credentials = authHeader.split(" ")[1];
     let credentials = "";
     try {
-      // Edge runtime: usar atob para decodificar base64
-      // (Buffer pode não existir em runtime Edge)
-      credentials = typeof atob === "function" ? atob(base64Credentials) : Buffer.from(base64Credentials, "base64").toString("utf8");
+      // Edge runtime compat: prefere atob, fallback pra Buffer
+      credentials =
+        typeof atob === "function"
+          ? atob(base64Credentials)
+          : Buffer.from(base64Credentials, "base64").toString("utf8");
     } catch (e) {
       return unauthorizedResponse();
     }
