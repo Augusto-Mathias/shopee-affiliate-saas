@@ -381,6 +381,9 @@ export async function GET(req: NextRequest) {
 
     const maxSortsToTry = Math.min(4, sortSequence.length);
 
+    // Limite da Shopee para páginas
+    const MAX_SHOPEE_PAGE_LIMIT = 50;
+
     for (let sortTry = 0; sortTry < maxSortsToTry; sortTry++) {
       const currentSortType = sortSequence[sortTry];
 
@@ -396,7 +399,15 @@ export async function GET(req: NextRequest) {
       for (const categoryId of shuffledCategories) {
         console.log(`\n  >> Categoria ${categoryId}`);
 
-        for (let page = 1; page <= settings.maxPagesPerRun; page++) {
+        // Garante que não ultrapassamos o limite de páginas da Shopee
+        const maxPages = Math.min(settings.maxPagesPerRun, MAX_SHOPEE_PAGE_LIMIT);
+        if (settings.maxPagesPerRun > MAX_SHOPEE_PAGE_LIMIT) {
+          console.warn(
+            `⚠️ settings.maxPagesPerRun (${settings.maxPagesPerRun}) excede o limite da Shopee (${MAX_SHOPEE_PAGE_LIMIT}). Usando ${maxPages} páginas.`
+          );
+        }
+
+        for (let page = 1; page <= maxPages; page++) {
           if (totalRequests >= settings.maxPagesPerRun) {
             console.log(
               `⚠️ Atingiu limite total de ${settings.maxPagesPerRun} requisições nesta execução. Parando.`

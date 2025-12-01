@@ -6,15 +6,19 @@
     "dev": "next dev",
     "build": "npx prisma generate && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "ingest:conversion": "ts-node src/services/shopee/ingest-runner.ts conversion",
+    "ingest:validated": "ts-node src/services/shopee/ingest-runner.ts validated"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "date-fns": "^4.1.0",
+    "dotenv": "^17.2.3",
     "next": "16.0.5",
     "prisma": "^5.22.0",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "undici": "^6.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -24,6 +28,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.0.5",
     "tailwindcss": "^4",
+    "ts-node": "^10.9.1",
     "typescript": "^5"
   }
 }
