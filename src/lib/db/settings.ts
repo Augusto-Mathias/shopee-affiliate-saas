@@ -9,9 +9,8 @@ const DEFAULT_SORT_TYPE = 1;
 
 export async function getCurrentSortType(): Promise<number> {
   try {
-    // Tentativa futura: ler de uma tabela persistente (user_settings/app_meta).
-    // Por enquanto, garantimos que sempre retornamos um número válido.
-    // Se você quiser, podemos tentar ler de user_settings (se adicionar coluna).
+    // Temporariamente retornamos um valor padrão.
+    // FUTURO: ler de user_settings ou app_meta quando adicionar persistência.
     return DEFAULT_SORT_TYPE;
   } catch (err) {
     console.warn('getCurrentSortType fallback to default due to error:', err);
@@ -24,8 +23,6 @@ export async function saveNextSortType(nextSortType: number): Promise<void> {
     // Hotfix: não persiste ainda. Apenas logamos para inspeção.
     // FUTURO: persistir em user_settings (nova coluna) ou em uma tabela app_meta.
     console.log(`saveNextSortType called (hotfix no-op). nextSortType=${nextSortType}`);
-    // Exemplo futuro (quando adicionar coluna):
-    // await prisma.user_settings.upsert({...})
   } catch (err) {
     console.warn('saveNextSortType hotfix failed (ignored):', err);
   }
