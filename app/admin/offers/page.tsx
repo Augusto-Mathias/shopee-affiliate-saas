@@ -31,10 +31,12 @@ export default async function AdminOffersPage() {
             {offers.map((o) => (
               <tr key={o.item_id.toString()}>
                 <td style={{ padding: 8, fontFamily: "monospace" }}>{o.item_id.toString()}</td>
-                <td style={{ padding: 8 }}>{o.product_name ?? "—"}</td>
-                <td style={{ padding: 8 }}>{o.price ? `R$ ${Number(o.price).toFixed(2)}` : "—"}</td>
+                <td style={{ padding: 8 }}>Nome indisponível</td>
+                <td style={{ padding: 8 }}>Preço indisponível</td>
                 <td style={{ padding: 8 }}>
-                  {o.posted_at ? format(new Date(o.posted_at), "dd/MM/yyyy HH:mm:ss", { locale: ptBR }) : "—"}
+                  {o.posted_at
+                    ? format(new Date(o.posted_at), "dd/MM/yyyy HH:mm:ss", { locale: ptBR })
+                    : "—"}
                 </td>
               </tr>
             ))}
